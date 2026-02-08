@@ -1,49 +1,23 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>PvZ2 RTON <-> JSON Converter</title>
-    <style>
-        :root { --p-green: #4ea8de; --p-blue: #5e60ce; --dark: #121212; --card: #1e1e1e; }
-        body { font-family: 'Segoe UI', Tahoma, sans-serif; background: var(--dark); color: white; display: flex; flex-direction: column; align-items: center; min-height: 100vh; margin: 0; padding: 20px; }
-        .container { display: flex; gap: 30px; flex-wrap: wrap; margin-top: 50px; }
-        .card { background: var(--card); padding: 30px; border-radius: 15px; width: 350px; text-align: center; box-shadow: 0 10px 30px rgba(0,0,0,0.5); border: 2px solid #333; transition: 0.3s; }
-        .card:hover { border-color: var(--p-green); transform: translateY(-5px); }
-        h2 { margin-top: 0; color: var(--p-green); }
-        .file-box { border: 2px dashed #444; padding: 20px; border-radius: 10px; cursor: pointer; margin-top: 20px; position: relative; }
-        .file-box:hover { background: #252525; }
-        input[type="file"] { position: absolute; opacity: 0; width: 100%; height: 100%; top: 0; left: 0; cursor: pointer; }
-        .status { margin-top: 15px; font-size: 0.9em; min-height: 1.5em; }
-        .success { color: #4ade80; }
-        .error { color: #f87171; }
-    </style>
+<meta charset="UTF-8">
+<title>PvZ2 RTON → JSON</title>
+<style>
+body { background:#121212;color:#fff;font-family:sans-serif;text-align:center }
+.box { border:2px dashed #444;padding:30px;margin:40px auto;width:320px }
+.success { color:#4ade80 }
+.error { color:#f87171 }
+</style>
 </head>
 <body>
 
-<h1>PvZ2 RTON Resource Tool</h1>
-<p>Upload a file to automatically convert and download the result.</p>
+<h1>PvZ2 RTON Decoder (REAL)</h1>
+<p>Decodes real PvZ2 RTON files</p>
 
-<div class="container">
-    <div class="card">
-        <h2>JSON ➔ RTON</h2>
-        <p>Convert your edited JSON back to PvZ2 Binary</p>
-        <div class="file-box">
-            <span>Choose .json file</span>
-            <input type="file" id="json-input" accept=".json">
-        </div>
-        <div id="json-status" class="status"></div>
-    </div>
-
-    <div class="card">
-        <h2>RTON ➔ JSON</h2>
-        <p>Convert PvZ2 RTON to readable Text</p>
-        <div class="file-box">
-            <span>Choose .rton file</span>
-            <input type="file" id="rton-input" accept=".rton">
-        </div>
-        <div id="rton-status" class="status"></div>
-    </div>
+<div class="box">
+<input type="file" id="file" accept=".rton">
+<p id="status"></p>
 </div>
 
 <script>
@@ -52,208 +26,93 @@ class PvZ2RTON {
         this.view = new DataView(buffer);
         this.offset = 0;
         this.decoder = new TextDecoder();
-        this.encoder = new TextEncoder();
+        this.strings = [];
     }
 
-    u8() {
-        return this.view.getUint8(this.offset++);
-    }
+    u8(){ return this.view.getUint8(this.offset++); }
+    u32(){ const v=this.view.getUint32(this.offset,true); this.offset+=4; return v; }
 
-    u32() {
-        const v = this.view.getUint32(this.offset, true);
-        this.offset += 4;
-        return v;
-    }
-
-    readString() {
+    readStringRaw() {
         const len = this.u32();
-        const bytes = new Uint8Array(this.view.buffer, this.offset, len);
+        const b = new Uint8Array(this.view.buffer,this.offset,len);
         this.offset += len;
-        return this.decoder.decode(bytes);
+        return this.decoder.decode(b);
     }
 
     decode() {
         const magic = String.fromCharCode(
-            this.u8(), this.u8(), this.u8(), this.u8()
+            this.u8(),this.u8(),this.u8(),this.u8()
         );
-        if (magic !== "RTON") throw new Error("Not a PvZ2 RTON file");
+        if (magic !== "RTON") throw new Error("Invalid RTON");
 
         this.u32(); // version
+
+        /* ---- STRING TABLE ---- */
+        const stringCount = this.u32();
+        for (let i=0;i<stringCount;i++) {
+            this.strings.push(this.readStringRaw());
+        }
+
         return this.readElement();
     }
 
     readElement() {
         const type = this.u8();
 
-        switch (type) {
+        switch(type) {
             case 0x00: return null;
             case 0x01: return false;
             case 0x02: return true;
             case 0x03: return this.u32();
-
             case 0x04: {
-                const v = this.view.getFloat32(this.offset, true);
-                this.offset += 4;
-                return v;
+                const f = this.view.getFloat32(this.offset,true);
+                this.offset+=4;
+                return f;
             }
-
-            case 0x05:
-                return this.readString();
-
-            case 0x06: { // array
-                const count = this.u32();
-                const arr = [];
-                for (let i = 0; i < count; i++)
-                    arr.push(this.readElement());
-                return arr;
+            case 0x05: {
+                const id = this.u32();
+                return this.strings[id] ?? null;
             }
-
-            case 0x07: { // object
-                const count = this.u32();
-                const obj = {};
-                for (let i = 0; i < count; i++) {
-                    const key = this.readString();
-                    obj[key] = this.readElement();
+            case 0x06: {
+                const c=this.u32(), a=[];
+                for(let i=0;i<c;i++) a.push(this.readElement());
+                return a;
+            }
+            case 0x07: {
+                const c=this.u32(), o={};
+                for(let i=0;i<c;i++){
+                    const k=this.strings[this.u32()];
+                    o[k]=this.readElement();
                 }
-                return obj;
+                return o;
             }
-
-            /* ---- PvZ2 specific ---- */
-
-            case 0x90: // comment / ignored
-                this.readString();
-                return this.readElement();
-
-            case 0x91: // padding / metadata
-                return this.readElement();
-
-            case 0xFF: // EOF
-                return null;
-
+            case 0x90: return this.readElement(); // comment
+            case 0x91: return this.readElement(); // metadata
+            case 0xFF: return null;
             default:
-                throw new Error("Unknown RTON type: 0x" + type.toString(16));
+                throw new Error("Unknown type 0x"+type.toString(16));
         }
     }
-
-    encode(obj) {
-        const parts = [];
-        parts.push(this.encoder.encode("RTON"));
-        parts.push(new Uint8Array([1, 0, 0, 0]));
-
-        const encodeElem = (v) => {
-            if (v === null) return new Uint8Array([0]);
-            if (v === false) return new Uint8Array([1]);
-            if (v === true) return new Uint8Array([2]);
-
-            if (typeof v === "number") {
-                const b = new ArrayBuffer(5);
-                const d = new DataView(b);
-                if (Number.isInteger(v)) {
-                    d.setUint8(0, 3);
-                    d.setUint32(1, v, true);
-                } else {
-                    d.setUint8(0, 4);
-                    d.setFloat32(1, v, true);
-                }
-                return new Uint8Array(b);
-            }
-
-            if (typeof v === "string") {
-                const s = this.encoder.encode(v);
-                const b = new Uint8Array(5 + s.length);
-                b[0] = 5;
-                new DataView(b.buffer).setUint32(1, s.length, true);
-                b.set(s, 5);
-                return b;
-            }
-
-            if (Array.isArray(v)) {
-                const out = [new Uint8Array([6])];
-                const len = new Uint8Array(4);
-                new DataView(len.buffer).setUint32(0, v.length, true);
-                out.push(len);
-                v.forEach(e => out.push(encodeElem(e)));
-                return this.combine(out);
-            }
-
-            if (typeof v === "object") {
-                const keys = Object.keys(v);
-                const out = [new Uint8Array([7])];
-                const len = new Uint8Array(4);
-                new DataView(len.buffer).setUint32(0, keys.length, true);
-                out.push(len);
-                keys.forEach(k => {
-                    const ks = this.encoder.encode(k);
-                    const kb = new Uint8Array(4 + ks.length);
-                    new DataView(kb.buffer).setUint32(0, ks.length, true);
-                    kb.set(ks, 4);
-                    out.push(kb);
-                    out.push(encodeElem(v[k]));
-                });
-                return this.combine(out);
-            }
-        };
-
-        parts.push(encodeElem(obj));
-        return this.combine(parts);
-    }
-
-    combine(arrays) {
-        const len = arrays.reduce((a, b) => a + b.length, 0);
-        const out = new Uint8Array(len);
-        let o = 0;
-        arrays.forEach(a => { out.set(a, o); o += a.length; });
-        return out;
-    }
 }
 
-/* -------- handlers -------- */
-
-document.getElementById("rton-input").onchange = async e => {
-    const f = e.target.files[0];
-    const s = document.getElementById("rton-status");
-    if (!f) return;
-
+document.getElementById("file").onchange = async e => {
+    const s=document.getElementById("status");
     try {
-        const buf = await f.arrayBuffer();
+        const buf = await e.target.files[0].arrayBuffer();
         const r = new PvZ2RTON(buf);
         const json = r.decode();
-        download(JSON.stringify(json, null, 4), f.name.replace(".rton", ".json"));
-        s.textContent = "✅ Success! Downloaded.";
-        s.className = "status success";
-    } catch (err) {
-        s.textContent = "❌ " + err.message;
-        s.className = "status error";
+        const blob = new Blob([JSON.stringify(json,null,4)]);
+        const a=document.createElement("a");
+        a.href=URL.createObjectURL(blob);
+        a.download=e.target.files[0].name.replace(".rton",".json");
+        a.click();
+        s.textContent="✅ Decoded successfully";
+        s.className="success";
+    } catch(err) {
+        s.textContent="❌ "+err.message;
+        s.className="error";
     }
 };
-
-document.getElementById("json-input").onchange = async e => {
-    const f = e.target.files[0];
-    const s = document.getElementById("json-status");
-    if (!f) return;
-
-    try {
-        const txt = await f.text();
-        const r = new PvZ2RTON(new ArrayBuffer(0));
-        const out = r.encode(JSON.parse(txt));
-        download(out, f.name.replace(".json", ".rton"));
-        s.textContent = "✅ Success! Downloaded.";
-        s.className = "status success";
-    } catch {
-        s.textContent = "❌ Invalid JSON.";
-        s.className = "status error";
-    }
-};
-
-function download(data, name) {
-    const b = new Blob([data]);
-    const u = URL.createObjectURL(b);
-    const a = document.createElement("a");
-    a.href = u;
-    a.download = name;
-    a.click();
-    URL.revokeObjectURL(u);
-}
 </script>
 </body>
 </html>
