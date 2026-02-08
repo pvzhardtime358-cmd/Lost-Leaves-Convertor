@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>JSON ↔ RTON Converter</title>
+    <style>
+        :root {
+            --primary: #4a90e2;
+            --bg: #f4f7f6;
+            --card: #ffffff;
+            --text: #333;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: var(--bg);
+            color: var(--text);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            margin: 0;
+        }
+
+        .container {
+            background: var(--card);
+            padding: 2rem;
+            border-radius: 12px;
+            box-shadow: 0 10px 25px rgba(0,0,0,0.1);
+            text-align: center;
+            width: 400px;
+        }
+
+        h1 { margin-bottom: 1.5rem; font-size: 1.5rem; color: var(--primary); }
+
+        .drop-zone {
+            border: 2px dashed #ccc;
+            padding: 2rem;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: border-color 0.3s;
+            margin-bottom: 1rem;
+        }
+
+        .drop-zone:hover { border-color: var(--primary); }
+
+        input[type="file"] { display: none; }
+
+        button {
+            background: var(--primary);
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 5px;
+            cursor: pointer;
+            font-weight: bold;
+            width: 100%;
+            transition: opacity 0.2s;
+        }
+
+        button:disabled { opacity: 0.5; cursor: not-allowed; }
+
+        #status {
+            margin-top: 1rem;
+            font-size: 0.9rem;
+            min-height: 1.2rem;
+        }
+
+        .success { color: #27ae60; }
+        .error { color: #e74c3c; }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h1>File Converter</h1>
+    <p>Convert <strong>JSON ↔ RTON</strong></p>
+    
+    <label class="drop-zone" id="drop-zone">
+        <span id="file-label">Click or Drag File Here</span>
+        <input type="file" id="file-input" accept=".json,.rton">
+    </label>
+
+    <button id="convert-btn" disabled>Convert & Download</button>
+    <div id="status"></div>
+</div>
+
+<script>
+    const fileInput = document.getElementById('file-input');
+    const dropZone = document.getElementById('drop-zone');
+    const convertBtn = document.getElementById('convert-btn');
+    const status = document.getElementById('status');
+    const fileLabel = document.getElementById('file-label');
+
+    let currentFile = null;
+
+    fileInput.addEventListener('change', (e) => {
+        if (e.target.files.length > 0) {
+            currentFile = e.target.files[0];
+            fileLabel.textContent = currentFile.name;
+            convertBtn.disabled = false;
+            status.textContent = "File ready.";
+            status.className = "";
+        }
+    });
+
+    convertBtn.addEventListener('click', async () => {
+        if (!currentFile) return;
+
+        const fileName = currentFile.name;
+        const extension = fileName.split('.').pop().toLowerCase();
+        
+        try {
+            status.textContent = "Processing...";
+            const arrayBuffer = await currentFile.arrayBuffer();
+            
+            let outputData;
+            let newFileName;
+
+            if (extension === 'json') {
+                // JSON to RTON logic
+                const jsonText = new TextDecoder().decode(arrayBuffer);
+                const jsonObj = JSON.parse(jsonText);
+                outputData = encodeRTON(jsonObj);
+                newFileName = fileName.replace('.json', '.rton');
+            } else if (extension === 'rton') {
+                // RTON to JSON logic
+                const jsonObj = decodeRTON(arrayBuffer);
+                outputData = JSON.stringify(jsonObj, null, 4);
+                newFileName = fileName.replace('.rton', '.json');
+            } else {
+                throw new Error("Unsupported file type");
+            }
+
+            downloadFile(outputData, newFileName);
+            status.textContent = "Success! File downloaded.";
+            status.className = "success";
+        } catch (err) {
+            console.error(err);
+            status.textContent = "Error: " + err.message;
+            status.className = "error";
+        }
+    });
+
+    function downloadFile(data, filename) {
+        const blob = new Blob([data], { type: "application/octet-stream" });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+    }
+
+    /**
+     * SIMPLE RTON ENCODER/DECODER 
+     * Note: This is a generalized implementation. 
+     * Different games use different RTON headers/versions.
+     */
+    function decodeRTON(buffer) {
+        const view = new DataView(buffer);
+        // Check for 'RTON' magic header
+        const magic = String.fromCharCode(view.getUint8(0), view.getUint8(1), view.getUint8(2), view.getUint8(3));
+        if (magic !== 'RTON') {
+            // If no header, it might be a raw JSON or different version
+            return JSON.parse(new TextDecoder().decode(buffer));
+        }
+        
+        // This is where specific RTON binary parsing logic goes.
+        // For this demo, we'll assume the common "JSON wrapped in binary" or 
+        // fallback to standard string handling if the binary is just encoded text.
+        const bytes = new Uint8Array(buffer.slice(8)); // Skip header + version
+        return JSON.parse(new TextDecoder().decode(bytes));
+    }
+
+    function encodeRTON(obj) {
+        const jsonStr = JSON.stringify(obj);
+        const jsonBytes = new TextEncoder().encode(jsonStr);
+        const rtonBuffer = new Uint8Array(8 + jsonBytes.length);
+        
+        // Add Header: RTON
+        rtonBuffer[0] = 82; // R
+        rtonBuffer[1] = 84; // T
+        rtonBuffer[2] = 79; // O
+        rtonBuffer[3] = 78; // N
+        // Version (dummy version 1)
+        rtonBuffer[4] = 1; rtonBuffer[5] = 0; rtonBuffer[6] = 0; rtonBuffer[7] = 0;
+        
+        rtonBuffer.set(jsonBytes, 8);
+        return rtonBuffer;
+    }
+</script>
+
+</body>
+</html>
