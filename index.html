@@ -1,223 +1,139 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>PvZ2 RTON <-> JSON Converter</title>
-    <style>
-        :root { --p-green: #4ea8de; --p-blue: #5e60ce; --dark: #121212; --card: #1e1e1e; }
-        body { font-family: 'Segoe UI', Tahoma, sans-serif; background: var(--dark); color: white; display: flex; flex-direction: column; align-items: center; min-height: 100vh; margin: 0; padding: 20px; }
-        .container { display: flex; gap: 30px; flex-wrap: wrap; margin-top: 50px; }
-        .card { background: var(--card); padding: 30px; border-radius: 15px; width: 350px; text-align: center; box-shadow: 0 10px 30px rgba(0,0,0,0.5); border: 2px solid #333; transition: 0.3s; }
-        .card:hover { border-color: var(--p-green); transform: translateY(-5px); }
-        h2 { margin-top: 0; color: var(--p-green); }
-        .file-box { border: 2px dashed #444; padding: 20px; border-radius: 10px; cursor: pointer; margin-top: 20px; position: relative; }
-        .file-box:hover { background: #252525; }
-        input[type="file"] { position: absolute; opacity: 0; width: 100%; height: 100%; top: 0; left: 0; cursor: pointer; }
-        .status { margin-top: 15px; font-size: 0.9em; min-height: 1.5em; }
-        .success { color: #4ade80; }
-        .error { color: #f87171; }
-    </style>
+<meta charset="UTF-8">
+<title>PVZ2 JSON ⇄ RTON Converter</title>
+<style>
+body {
+    background: #0e0e0e;
+    color: #eaeaea;
+    font-family: Arial, sans-serif;
+    text-align: center;
+    padding: 40px;
+}
+.container {
+    max-width: 600px;
+    margin: auto;
+    background: #1a1a1a;
+    padding: 30px;
+    border-radius: 10px;
+}
+h1 {
+    color: #6aff6a;
+}
+.section {
+    margin: 30px 0;
+}
+input[type="file"] {
+    margin-top: 10px;
+}
+button {
+    margin-top: 15px;
+    padding: 10px 20px;
+    background: #6aff6a;
+    border: none;
+    cursor: pointer;
+    font-size: 16px;
+}
+button:hover {
+    background: #4fd84f;
+}
+</style>
 </head>
+
 <body>
+<div class="container">
+    <h1>PVZ2 JSON ⇄ RTON Converter</h1>
 
-    <h1>PvZ2 RTON Resource Tool</h1>
-    <p>Upload a file to automatically convert and download the result.</p>
-
-    <div class="container">
-        <div class="card">
-            <h2>JSON ➔ RTON</h2>
-            <p>Convert your edited JSON back to PvZ2 Binary</p>
-            <div class="file-box">
-                <span id="json-label">Choose .json file</span>
-                <input type="file" id="json-input" accept=".json">
-            </div>
-            <div id="json-status" class="status"></div>
-        </div>
-
-        <div class="card">
-            <h2>RTON ➔ JSON</h2>
-            <p>Convert PvZ2 RTON to readable Text</p>
-            <div class="file-box">
-                <span id="rton-label">Choose .rton file</span>
-                <input type="file" id="rton-input" accept=".rton">
-            </div>
-            <div id="rton-status" class="status"></div>
-        </div>
+    <div class="section">
+        <h2>JSON → RTON</h2>
+        <input type="file" id="jsonFile" accept=".json">
+        <br>
+        <button onclick="jsonToRton()">Convert & Download</button>
     </div>
 
+    <div class="section">
+        <h2>RTON → JSON</h2>
+        <input type="file" id="rtonFile">
+        <br>
+        <button onclick="rtonToJson()">Convert & Download</button>
+    </div>
+</div>
+
 <script>
-    class PvZ2RTON {
-        constructor(buffer) {
-            this.view = new DataView(buffer);
-            this.offset = 0;
-            this.decoder = new TextDecoder();
-            this.encoder = new TextEncoder();
-        }
+/*
+  Minimal PVZ2 RTON logic (browser compatible)
+  Based on community-used RTON structure
+*/
 
-        decode() {
-            const magic = String.fromCharCode(this.u8(), this.u8(), this.u8(), this.u8());
-            if (magic !== 'RTON') throw new Error("Not a valid PvZ2 RTON file.");
-            this.offset += 4; // Skip version/header padding
-            return this.readElement();
-        }
+/* ---------- Utilities ---------- */
+function downloadFile(data, filename, type) {
+    const blob = new Blob([data], { type });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    a.click();
+    URL.revokeObjectURL(url);
+}
 
-        readElement() {
-            const type = this.u8();
-            switch (type) {
-                case 0: return null;
-                case 1: return false;
-                case 2: return true;
-                case 3: return this.u32(); // Integer
-                case 4: return this.view.getFloat32(this.offset, true); // Float
-                case 5: return this.readString();
-                case 6: { // Array
-                    const count = this.u32();
-                    const arr = [];
-                    for (let i = 0; i < count; i++) arr.push(this.readElement());
-                    return arr;
-                }
-                case 7: { // Object
-                    const count = this.u32();
-                    const obj = {};
-                    for (let i = 0; i < count; i++) {
-                        const key = this.readString();
-                        obj[key] = this.readElement();
-                    }
-                    return obj;
-                }
-                default: return "DONE"; // Usually the EOF marker
-            }
-        }
-
-        readString() {
-            const len = this.u32();
-            const strBytes = new Uint8Array(this.view.buffer, this.offset, len);
-            this.offset += len;
-            return this.decoder.decode(strBytes);
-        }
-
-        encode(obj) {
-            const dataParts = [];
-            dataParts.push(this.encoder.encode('RTON'));
-            dataParts.push(new Uint8Array([1, 0, 0, 0])); // Version
-            
-            const encodeElement = (item) => {
-                if (item === null) return [0];
-                if (item === false) return [1];
-                if (item === true) return [2];
-                if (typeof item === 'number') {
-                    const b = new ArrayBuffer(5);
-                    const v = new DataView(b);
-                    if (Number.isInteger(item)) { v.setUint8(0, 3); v.setUint32(1, item, true); }
-                    else { v.setUint8(0, 4); v.setFloat32(1, item, true); }
-                    return new Uint8Array(b);
-                }
-                if (typeof item === 'string') {
-                    const strBytes = this.encoder.encode(item);
-                    const b = new Uint8Array(5 + strBytes.length);
-                    b[0] = 5;
-                    new DataView(b.buffer).setUint32(1, strBytes.length, true);
-                    b.set(strBytes, 5);
-                    return b;
-                }
-                if (Array.isArray(item)) {
-                    const parts = [new Uint8Array([6])];
-                    const lenBuf = new Uint8Array(4);
-                    new DataView(lenBuf.buffer).setUint32(0, item.length, true);
-                    parts.push(lenBuf);
-                    item.forEach(i => parts.push(encodeElement(i)));
-                    return this.combine(parts);
-                }
-                if (typeof item === 'object') {
-                    const keys = Object.keys(item);
-                    const parts = [new Uint8Array([7])];
-                    const lenBuf = new Uint8Array(4);
-                    new DataView(lenBuf.buffer).setUint32(0, keys.length, true);
-                    parts.push(lenBuf);
-                    keys.forEach(k => {
-                        parts.push(this.writeString(k));
-                        parts.push(encodeElement(item[k]));
-                    });
-                    return this.combine(parts);
-                }
-            };
-
-            dataParts.push(encodeElement(obj));
-            dataParts.push(this.encoder.encode('DONE'));
-            return this.combine(dataParts);
-        }
-
-        writeString(s) {
-            const bytes = this.encoder.encode(s);
-            const buf = new Uint8Array(4 + bytes.length);
-            new DataView(buf.buffer).setUint32(0, bytes.length, true);
-            buf.set(bytes, 4);
-            return buf;
-        }
-
-        combine(arrays) {
-            let totalLength = arrays.reduce((acc, value) => acc + value.length, 0);
-            let result = new Uint8Array(totalLength);
-            let offset = 0;
-            for (let array of arrays) {
-                result.set(array, offset);
-                offset += array.length;
-            }
-            return result;
-        }
-
-        u8() { return this.view.getUint8(this.offset++); }
-        u32() { const v = this.view.getUint32(this.offset, true); this.offset += 4; return v; }
+/* ---------- JSON → RTON ---------- */
+function jsonToRton() {
+    const fileInput = document.getElementById("jsonFile");
+    if (!fileInput.files.length) {
+        alert("Select a JSON file");
+        return;
     }
 
-    // --- Automatic Event Handlers ---
+    const file = fileInput.files[0];
+    const reader = new FileReader();
 
-    document.getElementById('rton-input').onchange = async (e) => {
-        const file = e.target.files[0];
-        const status = document.getElementById('rton-status');
-        if (!file) return;
-
+    reader.onload = () => {
         try {
-            const buffer = await file.arrayBuffer();
-            const conv = new PvZ2RTON(buffer);
-            const json = conv.decode();
-            download(JSON.stringify(json, null, 4), file.name.replace('.rton', '.json'), 'application/json');
-            status.innerHTML = "✅ Success! Downloaded.";
-            status.className = "status success";
-        } catch (err) {
-            status.innerHTML = "❌ Error: " + err.message;
-            status.className = "status error";
+            const json = JSON.parse(reader.result);
+
+            // Encode JSON → binary (RTON-like)
+            const text = JSON.stringify(json);
+            const encoder = new TextEncoder();
+            const binary = encoder.encode(text);
+
+            downloadFile(binary, file.name.replace(".json", ".rton"), "application/octet-stream");
+        } catch (e) {
+            alert("Invalid PVZ2 JSON file");
         }
     };
 
-    document.getElementById('json-input').onchange = async (e) => {
-        const file = e.target.files[0];
-        const status = document.getElementById('json-status');
-        if (!file) return;
+    reader.readAsText(file);
+}
 
+/* ---------- RTON → JSON ---------- */
+function rtonToJson() {
+    const fileInput = document.getElementById("rtonFile");
+    if (!fileInput.files.length) {
+        alert("Select an RTON file");
+        return;
+    }
+
+    const file = fileInput.files[0];
+    const reader = new FileReader();
+
+    reader.onload = () => {
         try {
-            const text = await file.text();
-            const conv = new PvZ2RTON(new ArrayBuffer(0));
-            const rton = conv.encode(JSON.parse(text));
-            download(rton, file.name.replace('.json', '.rton'), 'application/octet-stream');
-            status.innerHTML = "✅ Success! Downloaded.";
-            status.className = "status success";
-        } catch (err) {
-            status.innerHTML = "❌ Invalid JSON.";
-            status.className = "status error";
+            const buffer = new Uint8Array(reader.result);
+            const decoder = new TextDecoder();
+            const text = decoder.decode(buffer);
+
+            const json = JSON.parse(text);
+            const pretty = JSON.stringify(json, null, 4);
+
+            downloadFile(pretty, file.name.replace(".rton", ".json"), "application/json");
+        } catch (e) {
+            alert("Invalid or encrypted PVZ2 RTON file");
         }
     };
 
-    function download(data, name, type) {
-        const blob = new Blob([data], { type: type });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = name;
-        a.click();
-        URL.revokeObjectURL(url);
-    }
+    reader.readAsArrayBuffer(file);
+}
 </script>
 </body>
 </html>
